@@ -1,0 +1,71 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: users
+    // Document ID: {userId} (Firebase Auth UID)
+    // Fields:
+    //   - uid: string (required) - The unique identifier for the user.
+    //   - displayName: string (optional) - The user's display name.
+    //   - email: string (required) - The user's email address.
+    //   - photoURL: string (optional) - URL to the user's profile picture.
+    //   - createdAt: timestamp (optional) - When the profile was created.
+    //   - lastLogin: timestamp (optional) - When the user last logged in.
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isValidUser(data) {
+      return data.keys().hasAll(['uid']) &&
+             data.uid is string &&
+             (!('email' in data) || (data.email is string && data.email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$"))) &&
+             (!('phoneNumber' in data) || data.phoneNumber is string) &&
+             (!('displayName' in data) || data.displayName is string) &&
+             (!('photoURL' in data) || data.photoURL is string) &&
+             (!('isOnline' in data) || data.isOnline is bool) &&
+             (!('lastSeen' in data) || data.lastSeen is timestamp);
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /users/{userId} {
+      // Users can read any profile to see contacts
+      allow read: if isAuthenticated();
+      
+      // Users can create/update their own profile with validation
+      allow create: if isOwner(userId) && isValidUser(request.resource.data);
+      allow update: if isOwner(userId) && isValidUser(request.resource.data) && 
+                    request.resource.data.uid == resource.data.uid;
+    }
+
+    match /chats/{chatId} {
+      // Allow read/write if the user is a participant
+      allow read, write: if isAuthenticated() && request.auth.uid in chatId.split('_');
+
+      match /messages/{messageId} {
+        // Allow read/write if the user is a participant of the parent chat
+        allow read, write: if isAuthenticated() && request.auth.uid in chatId.split('_');
+      }
+    }
+
+    // Default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
